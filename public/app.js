@@ -6,6 +6,7 @@ const state = {
   presets: {},
   hist: JSON.parse(sessionStorage.mlHist || '[]'),
   about: { version: '1.0.0', exiftoolVersion: 'Unknown' },
+  generatedCommand: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -37,6 +38,14 @@ const flagGroups = {
 
 function setStatus(text) {
   $('statusText').textContent = text;
+}
+
+function setGeneratedCommand(command = '') {
+  state.generatedCommand = command;
+  $('cmd').textContent = command || 'Select a file and press Generate Command or Run ExifTool.';
+  $('commandAddress').value = command || 'exiftool';
+  $('clip').disabled = !command;
+  $('toolCopy').disabled = !command;
 }
 
 function err(text) {
@@ -79,7 +88,7 @@ async function loadAbout() {
 function renderPresets() {
   $('presets').innerHTML = Object.entries(state.presets).map(([key, preset]) => `
     <button class="preset-item ${preset.mode === 'write' ? 'write' : 'read'}" data-preset="${key}" aria-pressed="${state.preset === key}">
-      <span class="preset-icon">${preset.mode === 'write' ? '🛠️' : '🔍'}</span>
+      <span class="preset-icon mini-icon ${preset.mode === 'write' ? 'icon-tools' : 'icon-search'}"></span>
       <span><strong>${escapeHtml(preset.label)}</strong><small>${preset.mode === 'write' ? 'Modifies metadata in a copy' : 'Read-only inspection'}</small></span>
     </button>
   `).join('');
@@ -144,7 +153,8 @@ function updateMode() {
   const badge = $('modeBadge');
   const isWrite = modifies();
   badge.className = `mode-badge ${isWrite ? 'write' : 'read'}`;
-  badge.textContent = isWrite ? 'Modifies generated copy' : 'Read-only inspection';
+  badge.textContent = isWrite ? 'Creates modified copy' : 'Read-only inspection';
+  if (state.file) renderFileInfo();
 }
 
 function wireNavigation() {
@@ -155,6 +165,39 @@ function wireNavigation() {
       $(button.dataset.target).scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
   });
+}
+
+function fileExtension(name = '') {
+  const clean = String(name).split(/[\\/]/).pop() || '';
+  const i = clean.lastIndexOf('.');
+  return i > -1 ? clean.slice(i + 1).toLowerCase() : '(none)';
+}
+
+function renderFileInfo() {
+  const json = state.file;
+  if (!json) {
+    $('fileInfo').className = 'file-info empty';
+    $('fileInfo').textContent = 'No file selected.';
+    setGeneratedCommand('');
+    return;
+  }
+  $('fileInfo').className = 'file-info';
+  $('fileInfo').innerHTML = `
+    <dl>
+      <dt>Original filename</dt><dd>${escapeHtml(json.filename)}</dd>
+      <dt>MIME type</dt><dd>${escapeHtml(json.type)}</dd>
+      <dt>File size</dt><dd>${(json.size / 1048576).toFixed(2)} MB (${json.size} bytes)</dd>
+      <dt>Extension</dt><dd>${escapeHtml(fileExtension(json.filename))}</dd>
+      <dt>Operation</dt><dd>${modifies() ? 'Creates a modified copy; original upload is not overwritten.' : 'Read-only; no output copy is created.'}</dd>
+    </dl>
+  `;
+}
+
+function clearCurrentFile() {
+  state.file = null;
+  $('file').value = '';
+  renderFileInfo();
+  setStatus('Current file cleared');
 }
 
 async function uploadSelectedFile(file) {
@@ -171,14 +214,7 @@ async function uploadSelectedFile(file) {
     return;
   }
   state.file = json;
-  $('fileInfo').className = 'file-info';
-  $('fileInfo').innerHTML = `
-    <dl>
-      <dt>Name</dt><dd>${escapeHtml(json.filename)}</dd>
-      <dt>Type</dt><dd>${escapeHtml(json.type)}</dd>
-      <dt>Size</dt><dd>${(json.size / 1048576).toFixed(2)} MB</dd>
-    </dl>
-  `;
+  renderFileInfo();
   setStatus('File loaded');
 }
 
@@ -200,8 +236,7 @@ async function api(path) {
 async function previewCommand() {
   try {
     const json = await api('/api/command');
-    $('cmd').textContent = json.command;
-    $('commandAddress').value = json.command;
+    setGeneratedCommand(json.command);
     setStatus('Command generated');
   } catch (error) {
     err(error.message);
@@ -213,8 +248,7 @@ async function runCommand() {
     if (modifies() && !confirm('This operation changes metadata in a new output copy. Continue?')) return;
     setStatus('Running ExifTool…');
     const json = await api('/api/run');
-    $('cmd').textContent = json.command;
-    $('commandAddress').value = json.command;
+    setGeneratedCommand(json.command);
     $('raw').textContent = `${json.stdout || ''}\n${json.stderr || ''}`;
     $('organized').innerHTML = Object.keys(json.organized).length
       ? Object.entries(json.organized).map(([group, rows]) => `<details open><summary>${escapeHtml(group)}</summary>${rows.map((row) => `<p><b>${escapeHtml(row.key)}</b>: ${escapeHtml(row.value)}</p>`).join('')}</details>`).join('')
@@ -233,18 +267,67 @@ async function runCommand() {
 function resetUi() {
   state.flags = [];
   state.edits = {};
-  $('cmd').textContent = 'Reset.';
-  $('commandAddress').value = 'exiftool';
+  setGeneratedCommand('');
   renderEdits();
   renderFlags();
   updateMode();
   setStatus('Reset complete');
 }
 
+function openPanicDialog() {
+  $('panicResult').textContent = '';
+  $('panicDialog').hidden = false;
+  $('panicCancel').focus();
+}
+
+function closePanicDialog() {
+  $('panicDialog').hidden = true;
+}
+
 async function panicDelete() {
-  await fetch('/api/panic', { method: 'POST' });
-  sessionStorage.removeItem('mlHist');
-  location.reload();
+  $('panicConfirm').disabled = true;
+  $('panicResult').textContent = 'Deleting temporary files…';
+  try {
+    const res = await fetch('/api/panic', { method: 'POST' });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json.ok) throw new Error(json.error || 'Panic delete failed.');
+    sessionStorage.removeItem('mlHist');
+    state.hist = [];
+    renderHist();
+    clearCurrentFile();
+    $('panicResult').textContent = 'Panic Delete succeeded.';
+    setStatus('Panic Delete succeeded');
+  } catch (error) {
+    $('panicResult').textContent = `Panic Delete failed: ${error.message}`;
+    setStatus('Panic Delete failed');
+  } finally {
+    $('panicConfirm').disabled = false;
+  }
+}
+
+async function copyGeneratedCommand() {
+  if (!state.generatedCommand) {
+    setStatus('Generate a command before copying');
+    return;
+  }
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(state.generatedCommand);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = state.generatedCommand;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      if (!document.execCommand('copy')) throw new Error('Browser refused clipboard access.');
+      ta.remove();
+    }
+    setStatus('Command copied to clipboard');
+  } catch (error) {
+    setStatus(`Copy failed: ${error.message}`);
+  }
 }
 
 function openAbout() {
@@ -256,33 +339,91 @@ function closeAbout() {
   $('aboutDialog').hidden = true;
 }
 
+
+function closeMenus() {
+  document.querySelectorAll('[data-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  document.querySelectorAll('.xp-menu').forEach((menu) => menu.classList.remove('open'));
+}
+
+function toggleMenu(name) {
+  const menu = $(`menu-${name}`);
+  const button = document.querySelector(`[data-menu="${name}"]`);
+  const open = menu.classList.contains('open');
+  closeMenus();
+  if (!open) {
+    menu.classList.add('open');
+    button.setAttribute('aria-expanded', 'true');
+  }
+}
+
+function scrollToPanel(id) {
+  $(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function showFlagGuide() {
+  setStatus('Flag guide: use read-only flags for inspection; amber presets create output copies.');
+  scrollToPanel('advancedPanel');
+}
+
+function handleMenuAction(action) {
+  ({
+    'open-file': () => $('file').click(),
+    'clear-file': clearCurrentFile,
+    'panic-delete': openPanicDialog,
+    'generate-command': previewCommand,
+    'run-exiftool': runCommand,
+    'reset-options': resetUi,
+    'enable-expert': () => { $('expert').checked = true; renderFlags(); scrollToPanel('advancedPanel'); },
+    about: openAbout,
+    'flag-guide': showFlagGuide,
+  }[action]?.());
+}
+
 $('file').onchange = (event) => uploadSelectedFile(event.target.files[0]);
 $('toolOpen').onclick = () => $('file').click();
+$('clearFile').onclick = clearCurrentFile;
 $('preview').onclick = previewCommand;
 $('toolPreview').onclick = previewCommand;
+$('clip').onclick = copyGeneratedCommand;
+$('toolCopy').onclick = copyGeneratedCommand;
 $('run').onclick = runCommand;
 $('toolRun').onclick = runCommand;
-$('clip').onclick = async () => {
-  await navigator.clipboard?.writeText($('cmd').textContent);
-  setStatus('Command copied to clipboard');
-};
-$('navCopy').onclick = () => $('clip').click();
+$('navCopy').onclick = copyGeneratedCommand;
 $('reset').onclick = resetUi;
 $('toolReset').onclick = resetUi;
-$('panic').onclick = panicDelete;
-$('toolPanic').onclick = panicDelete;
+$('panic').onclick = openPanicDialog;
+$('toolPanic').onclick = openPanicDialog;
+$('panicConfirm').onclick = panicDelete;
+$('panicCancel').onclick = closePanicDialog;
+$('panicCloseX').onclick = closePanicDialog;
 $('expert').onchange = renderFlags;
 $('search').oninput = renderFlags;
-$('helpAbout').onclick = openAbout;
 $('navAbout').onclick = openAbout;
 $('aboutOk').onclick = closeAbout;
 $('aboutCloseX').onclick = closeAbout;
-$('aboutDialog').addEventListener('click', (event) => {
-  if (event.target === $('aboutDialog')) closeAbout();
+$('aboutDialog').addEventListener('click', (event) => { if (event.target === $('aboutDialog')) closeAbout(); });
+$('panicDialog').addEventListener('click', (event) => { if (event.target === $('panicDialog')) closePanicDialog(); });
+
+document.querySelectorAll('[data-menu]').forEach((button) => {
+  button.addEventListener('click', (event) => { event.stopPropagation(); toggleMenu(button.dataset.menu); });
 });
+document.querySelectorAll('.xp-menu button').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    closeMenus();
+    if (button.dataset.scroll) scrollToPanel(button.dataset.scroll);
+    if (button.dataset.action) handleMenuAction(button.dataset.action);
+  });
+});
+document.addEventListener('click', closeMenus);
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !$('aboutDialog').hidden) closeAbout();
+  const inField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) && event.target.type !== 'file';
+  if (event.key === 'Escape') { closeMenus(); closeAbout(); closePanicDialog(); return; }
+  if (inField || !(event.ctrlKey || event.metaKey)) return;
+  if (event.key.toLowerCase() === 'o') { event.preventDefault(); $('file').click(); }
+  if (event.key === 'Enter') { event.preventDefault(); runCommand(); }
+  if (event.shiftKey && event.key.toLowerCase() === 'c') { event.preventDefault(); copyGeneratedCommand(); }
 });
 
 init();
