@@ -454,3 +454,77 @@ code { font-family: Consolas, "Courier New", monospace; }
   .button-row button { min-height: 34px; flex: 1 1 45%; justify-content: center; }
   .about-content { grid-template-columns: 1fr; }
 }
+
+/* Windows XP-style menus and local CSS icons */
+.menu-root { position: relative; }
+.xp-menu {
+  position: absolute;
+  top: 24px;
+  left: 0;
+  z-index: 20;
+  min-width: 184px;
+  display: none;
+  padding: 2px;
+  border: 1px solid #aca899;
+  background: #f2efe2;
+  box-shadow: 2px 2px 3px rgba(0,0,0,.35);
+}
+.xp-menu.open { display: grid; }
+.xp-menu button {
+  width: 100%;
+  min-height: 24px;
+  padding: 4px 24px 4px 22px;
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+.xp-menu button:hover,
+.xp-menu button:focus { border-color: #316ac5; background: #c1d2ee; }
+.menu-sep { height: 1px; margin: 3px 2px; background: #aca899; border-bottom: 1px solid #fff; }
+.danger-menu { color: #9b0000; }
+button:disabled { color: #777; cursor: default; opacity: .65; }
+button:disabled:hover { background: linear-gradient(#fff, #ecebe5 45%, #d8d2bd 46%, #f7f4ea); }
+.small-button { margin-left: 6px; min-height: 24px; }
+.dialog-result { min-height: 18px; color: #0645ad; }
+.about-content.single { display: block; }
+
+.mini-icon, .app-icon, .file-icon { position: relative; flex: 0 0 auto; }
+.mini-icon { width: 16px; height: 16px; display: inline-block; border: 1px solid #6d88b7; background: linear-gradient(#fff, #cfe2ff); box-shadow: inset 1px 1px #fff; }
+.icon-folder::before { content: ''; position: absolute; left: 2px; top: 3px; width: 6px; height: 3px; background: #ffd45a; border: 1px solid #a66b00; border-bottom: 0; }
+.icon-folder::after { content: ''; position: absolute; left: 1px; top: 6px; width: 12px; height: 8px; background: #ffc928; border: 1px solid #a66b00; }
+.icon-search::before { content: ''; position: absolute; left: 3px; top: 3px; width: 7px; height: 7px; border: 2px solid #245edb; border-radius: 50%; background: #fff; }
+.icon-search::after { content: ''; position: absolute; left: 11px; top: 11px; width: 7px; height: 2px; background: #245edb; transform: rotate(45deg); transform-origin: left center; }
+.icon-command::before { content: '>'; position: absolute; left: 3px; top: -1px; color: #0a620a; font: bold 13px Consolas, monospace; }
+.icon-copy::before { content: ''; position: absolute; left: 5px; top: 3px; width: 7px; height: 9px; border: 1px solid #245edb; background: #fff; }
+.icon-copy::after { content: ''; position: absolute; left: 2px; top: 6px; width: 7px; height: 8px; border: 1px solid #245edb; background: #eaf2ff; }
+.icon-run::before { content: ''; position: absolute; left: 5px; top: 3px; border-left: 8px solid #138313; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+.icon-reset::before { content: '↶'; position: absolute; left: 1px; top: -4px; color: #245edb; font-size: 19px; }
+.icon-trash::before { content: ''; position: absolute; left: 4px; top: 5px; width: 8px; height: 9px; background: #eee; border: 1px solid #777; }
+.icon-trash::after { content: ''; position: absolute; left: 3px; top: 3px; width: 10px; height: 2px; background: #777; }
+.icon-tools::before { content: ''; position: absolute; left: 7px; top: 2px; width: 3px; height: 12px; background: #777; transform: rotate(35deg); }
+.icon-tools::after { content: ''; position: absolute; left: 3px; top: 9px; width: 10px; height: 3px; background: #d28b00; transform: rotate(-35deg); }
+.icon-gear::before { content: '⚙'; position: absolute; left: 0; top: -4px; color: #555; font-size: 16px; }
+.icon-chart::before { content: ''; position: absolute; left: 3px; bottom: 2px; width: 2px; height: 8px; background: #245edb; box-shadow: 4px -3px #4a9a2a, 8px -6px #d28b00; }
+.icon-info::before { content: 'i'; position: absolute; left: 5px; top: -2px; font: bold 15px Georgia, serif; color: #245edb; }
+.icon-warning::before { content: '!'; position: absolute; left: 5px; top: 1px; z-index: 1; font-weight: bold; }
+.icon-warning::after { content: ''; position: absolute; left: 2px; top: 2px; border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 12px solid #ffd45a; }
+.icon-edit::before { content: ''; position: absolute; left: 7px; top: 1px; width: 3px; height: 13px; background: #d28b00; transform: rotate(35deg); }
+.icon-monitor::before { content: ''; position: absolute; left: 2px; top: 3px; width: 11px; height: 8px; background: #111; border: 1px solid #777; }
+.icon-save::before { content: ''; position: absolute; left: 3px; top: 2px; width: 10px; height: 12px; background: #245edb; border: 1px solid #06327a; }
+.icon-clock::before { content: ''; position: absolute; left: 2px; top: 2px; width: 10px; height: 10px; border: 2px solid #245edb; border-radius: 50%; background: #fff; }
+.icon-picture::before { content: ''; position: absolute; inset: 9px; border: 1px solid #7f9db9; background: linear-gradient(135deg, #bde0ff 55%, #3f9d39 56%); }
+
+@media (max-width: 760px) {
+  html, body { max-width: 100%; overflow-x: hidden; }
+  .xp-menubar { height: auto; min-height: 30px; overflow: visible; }
+  .xp-menubar button { min-height: 28px; padding: 5px 10px; }
+  .xp-menu { top: 29px; min-width: min(230px, calc(100vw - 16px)); }
+  .addressbar { grid-template-columns: 1fr; }
+  .addressbar input { width: 100%; min-width: 0; }
+  .file-dialog { grid-template-columns: 42px 1fr; gap: 8px; }
+  .file-icon { width: 38px; height: 38px; }
+  dl { grid-template-columns: 92px minmax(0, 1fr); }
+  .command-panel pre, #raw { white-space: pre; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .flag { grid-template-columns: 24px minmax(76px, .45fr) minmax(0, 1fr); }
+}
