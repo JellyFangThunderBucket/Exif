@@ -110,7 +110,7 @@ The app includes a local web manifest so it can launch like a Home Screen utilit
 - ExifTool options and editable tags are restricted by allowlists in `server/exiftool.js`.
 - Uploaded originals are stored in a temporary private directory.
 - Write operations use a new generated output path instead of overwriting the uploaded original.
-- Panic Delete removes temporary uploads, generated output files, and browser session history after confirmation.
+- Delete Temporary Files removes temporary uploads, generated output files, and browser session history after confirmation.
 
 ## Useful commands
 
@@ -174,3 +174,15 @@ Workspace-to-command mapping:
 - Hashes: Node `crypto` SHA-256 and MD5.
 
 Safety limits include maximum upload size, magic-byte file type verification, output caps, timeouts, generated-artifact limits, no archive extraction, no arbitrary command names, no arbitrary flags, private temporary directories, sanitized errors, and private-network deployment. OCR can be wrong, metadata can be absent or altered, strings may be misleading fragments, and binary signatures may be false positives.
+
+## Stage 4 completion notes
+
+Installed Utilities can be rechecked from **Tools > Installed Utilities**. The dialog uses `/api/tools?refresh=1` and shows installed/unavailable state, version text when the executable reports it, purpose, and install hints. The full Ubuntu command is:
+
+```bash
+sudo apt install -y libimage-exiftool-perl mediainfo ffmpeg imagemagick binutils zbar-tools tesseract-ocr binwalk file
+```
+
+Safe Investigation chooses tools from the uploaded file's detected MIME family. It always includes hashes, uses read-only utilities only when applicable and installed, skips unavailable tools with an explanation, and does not run OCR automatically. Cancellation kills the active allowlisted child process and preserves completed results.
+
+Output limits include upload size limits, tool stdout/stderr caps, strings count caps, report size caps, generated-artifact size/count caps, and per-tool timeouts. Metadata, OCR, QR/barcode values, printable strings, media signatures, and binary signatures can be missing, altered, inaccurate, irrelevant, or misleading.

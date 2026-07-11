@@ -13,6 +13,9 @@ const state = {
   selectedRow: null,
   tools: {},
   investigation: null,
+  stringsRows: [],
+  qrCodes: [],
+  ocrText: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -111,6 +114,25 @@ async function init() {
 }
 
 
+
+async function runToolAnalysis(analysis, extra = {}) {
+  if (!state.file) { err('Select a file first.'); return null; }
+  setStatus(`Running ${analysis}…`);
+  const res = await fetch('/api/tool', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...state.file, analysis, ...extra }) });
+  const json = await res.json();
+  if (!res.ok) { err(json.error); setStatus(`${analysis} failed`); return null; }
+  setStatus(`${analysis} completed`);
+  return json;
+}
+function showCommandInfo(command) {
+  const cmd = typeof command === 'string' ? { command, explanations: [] } : command;
+  if (!cmd?.command) { setStatus('No command has been generated yet.'); return; }
+  $('explorerCommandDetails').innerHTML = `<p><code>${escapeHtml(cmd.command)}</code></p><dl class="tag-detail-grid">${(cmd.explanations || []).map((item) => `<dt>${escapeHtml(item.flag)}</dt><dd>${escapeHtml(item.explanation)}</dd>`).join('') || '<dt>Command</dt><dd>Uses a fixed server-side allowlisted argument array.</dd>'}</dl>`;
+  $('commandDialog').hidden = false;
+}
+function renderToolObject(obj) { return `<dl>${Object.entries(obj || {}).filter(([_,v]) => !Array.isArray(v) && typeof v !== 'object').map(([k,v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v ?? 'Unknown')}</dd>`).join('')}</dl>`; }
+function downloadText(filename, text, type = 'text/plain') { const blob = new Blob([text], { type }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href); }
+
 async function loadTools() {
   try {
     const res = await fetch('/api/tools');
@@ -168,7 +190,7 @@ async function verifyHashInput() {
   if (!hashes || !expected) { $('hashVerifyResult').textContent = ''; return; }
   const actual = expected.length === 32 ? hashes.md5 : hashes.sha256;
   const res = await fetch('/api/verify-hash', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actual, expected }) });
-  $('hashVerifyResult').textContent = (await res.json()).result;
+  const json = await res.json(); $('hashVerifyResult').textContent = json.status === 'invalid' ? 'Invalid hash format' : `${json.algorithm}: ${json.status}`;
 }
 
 async function loadAbout() {
@@ -480,16 +502,16 @@ async function panicDelete() {
   try {
     const res = await fetch('/api/panic', { method: 'POST' });
     const json = await res.json().catch(() => ({}));
-    if (!res.ok || !json.ok) throw new Error(json.error || 'Panic delete failed.');
+    if (!res.ok || !json.ok) throw new Error(json.error || 'Delete failed.');
     sessionStorage.removeItem('mlHist');
     state.hist = [];
     renderHist();
     clearCurrentFile();
-    $('panicResult').textContent = 'Panic Delete succeeded.';
-    setStatus('Panic Delete succeeded');
+    $('panicResult').textContent = 'Temporary files deleted.';
+    setStatus('Temporary files deleted');
   } catch (error) {
-    $('panicResult').textContent = `Panic Delete failed: ${error.message}`;
-    setStatus('Panic Delete failed');
+    $('panicResult').textContent = `Delete failed: ${error.message}`;
+    setStatus('Delete failed');
   } finally {
     $('panicConfirm').disabled = false;
   }
@@ -609,7 +631,31 @@ $('runStrings').onclick = () => runInvestigation(['strings']);
 $('stringsFilter').oninput = () => state.investigation?.strings && renderStrings(state.investigation.strings);
 $('hashVerify').oninput = verifyHashInput;
 $('copyReport').onclick = () => copyText($('reportResult').textContent, 'Report copied');
-$('runOcr').onclick = async () => { try { const res = await fetch('/api/validate-ocr-language', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language: $('ocrLanguage').value }) }); const json = await res.json(); $('ocrResult').textContent = res.ok ? `OCR is explicit-only. Language ${json.language} is allowed; run endpoint is not automatic.` : json.error; } catch (e) { $('ocrResult').textContent = e.message; } };
+$('runOcr').onclick = async () => { const json = await runToolAnalysis('ocr', { language: $('ocrLanguage').value }); if (!json) return; state.ocrText = json.text || ''; $('ocrResult').textContent = json.text || json.message || 'No readable text detected.'; $('copyOcrText').disabled = !state.ocrText; $('downloadOcrText').disabled = !state.ocrText; };
+
+$('runMediaInfo').onclick = async () => { const json = await runToolAnalysis('media'); if (json) $('mediaInfoResult').innerHTML = `<h3>FFprobe</h3>${renderToolObject(json.ffprobe?.summary || {})}<h3>MediaInfo</h3>${renderToolObject(json.mediaInfo?.summary || {})}<h3>Failures</h3><pre>${escapeHtml(JSON.stringify(json.failures || [], null, 2))}</pre><h3>Raw FFprobe</h3><pre>${escapeHtml(json.ffprobe?.raw || 'Unavailable')}</pre><h3>Raw MediaInfo</h3><pre>${escapeHtml(json.mediaInfo?.raw || 'Unavailable')}</pre>`; };
+$('runImageProps').onclick = async () => { const json = await runToolAnalysis('image'); if (json) $('imagePropsResult').innerHTML = `${renderToolObject(json.summary)}<h3>Profiles</h3><pre>${escapeHtml((json.summary.profiles || []).join('\n') || 'Unknown')}</pre><h3>Raw identify</h3><pre>${escapeHtml(json.raw || '')}</pre>`; };
+$('runQr').onclick = async () => { const json = await runToolAnalysis('qr'); if (!json) return; state.qrCodes = json.codes || []; $('copyAllQr').disabled = !state.qrCodes.length; $('qrResult').innerHTML = state.qrCodes.length ? state.qrCodes.map((code, i) => `<p><b>${escapeHtml(code.symbology)}</b><br>${escapeHtml(code.value)}<br><button type="button" data-copy-qr="${i}">Copy Value</button>${code.url ? `<button type="button" data-open-qr="${i}">Open Link</button>` : ''}</p>`).join('') + `<h3>Raw output</h3><pre>${escapeHtml(json.raw || '')}</pre>` : `No codes detected.${json.warning ? ` ${escapeHtml(json.warning)}` : ''}`; document.querySelectorAll('[data-copy-qr]').forEach(b => b.onclick = () => copyText(state.qrCodes[Number(b.dataset.copyQr)].value, 'QR value copied')); document.querySelectorAll('[data-open-qr]').forEach(b => b.onclick = () => { const url = state.qrCodes[Number(b.dataset.openQr)].url; if (confirm(`Open external link?\n${url}\nThis leaves Metadata Lab.`)) location.href = url; }); };
+$('copyAllQr').onclick = () => copyText(state.qrCodes.map(c => `${c.symbology}:${c.value}`).join('\n'), 'QR values copied');
+$('copyOcrText').onclick = () => copyText(state.ocrText, 'OCR text copied');
+$('downloadOcrText').onclick = () => downloadText('ocr.txt', state.ocrText);
+$('clearOcrText').onclick = () => { state.ocrText = ''; $('ocrResult').textContent = 'No OCR run yet.'; $('copyOcrText').disabled = true; $('downloadOcrText').disabled = true; };
+$('discoverEmbedded').onclick = async () => { const json = await runToolAnalysis('embedded'); if (json) $('embeddedResult').innerHTML = json.resources.map(r => `<p><b>${escapeHtml(r.tag)}</b> ${escapeHtml(r.group)} ${escapeHtml(r.likelyType)} <button type="button" disabled>Extract unavailable until ExifTool reports this resource for the file</button></p>`).join('') || 'No embedded resources discovered.'; };
+$('extractFirstFrame').onclick = async () => { const json = await runToolAnalysis('frame', { mode: 'first' }); if (json) $('frameResult').innerHTML = `<a class="download-link" href="${escapeHtml(json.download)}">Download frame</a><pre>${escapeHtml(json.command)}</pre>`; };
+$('extractTimestampFrame').onclick = async () => { const json = await runToolAnalysis('frame', { mode: 'timestamp', timestamp: $('frameTimestamp').value }); if (json) $('frameResult').innerHTML = `<a class="download-link" href="${escapeHtml(json.download)}">Download frame</a><pre>${escapeHtml(json.command)}</pre>`; };
+$('runBinwalk').onclick = async () => { const json = await runToolAnalysis('binary'); if (json) $('binaryResult').innerHTML = `<p>${escapeHtml(json.warning)}</p>${(json.signatures || []).map(s => `<p>${escapeHtml(s.offset ?? 'Unknown')} ${escapeHtml(s.hex)} ${escapeHtml(s.description)}</p>`).join('')}<h3>Raw report</h3><pre>${escapeHtml(json.raw || '')}</pre>`; };
+$('showMediaCommand').onclick = () => showCommandInfo('mediainfo --Output=JSON file && ffprobe -v error -print_format json -show_format -show_streams file');
+$('showImageCommand').onclick = () => showCommandInfo('identify -verbose file');
+$('showQrCommand').onclick = () => showCommandInfo('zbarimg --quiet file');
+$('showOcrCommand').onclick = () => showCommandInfo('tesseract file stdout -l eng');
+$('showStringsCommand').onclick = () => showCommandInfo(`strings -n ${$('stringsMin').value} file`);
+$('showEmbeddedCommand').onclick = () => showCommandInfo('exiftool -b -ThumbnailImage file');
+$('showFrameCommand').onclick = () => showCommandInfo('ffmpeg -ss timestamp -i file -frames:v 1 output.jpg');
+$('showBinwalkCommand').onclick = () => showCommandInfo('binwalk file');
+$('downloadReportJson').onclick = () => downloadText('metadata-lab-report.json', $('reportResult').textContent, 'application/json');
+$('downloadReportText').onclick = () => downloadText('metadata-lab-report.txt', $('reportResult').textContent);
+$('clearReport').onclick = () => { $('reportResult').textContent = 'No report yet.'; setStatus('Report cleared'); };
+
 $('validateFrameTime').onclick = async () => { const res = await fetch('/api/validate-timestamp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timestamp: $('frameTimestamp').value }) }); const json = await res.json(); $('frameResult').textContent = res.ok ? `Timestamp accepted: ${json.timestamp}` : json.error; };
 $('utilitiesClose').onclick = closeUtilitiesDialog;
 $('utilitiesCloseX').onclick = closeUtilitiesDialog;
