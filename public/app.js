@@ -7,6 +7,12 @@ const state = {
   hist: JSON.parse(sessionStorage.mlHist || '[]'),
   about: { version: '1.0.0', exiftoolVersion: 'Unknown' },
   generatedCommand: '',
+  explorer: null,
+  selectedGroup: '',
+  sort: { key: 'tag', dir: 1 },
+  selectedRow: null,
+  tools: {},
+  investigation: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -34,6 +40,35 @@ const flagGroups = {
     ['-gps:all=', 'Remove GPS metadata from the output copy.'],
     ['-xmp:geotag=', 'Remove XMP geotag trail data.'],
   ],
+};
+
+const tagExplanations = {
+  Make: 'Reports the camera or device maker written in metadata.',
+  Model: 'Reports the camera or phone model written in metadata.',
+  Software: 'Reports software that wrote or edited the metadata.',
+  DateTimeOriginal: 'Reports the original capture date/time when the device provided it.',
+  CreateDate: 'Reports a creation date/time stored by the file or metadata format.',
+  ModifyDate: 'Reports a modification date/time stored by the file or metadata format.',
+  GPSLatitude: 'Reports latitude metadata if location data is present.',
+  GPSLongitude: 'Reports longitude metadata if location data is present.',
+  GPSPosition: 'Reports a combined GPS position string when ExifTool derives one.',
+  Orientation: 'Reports intended image rotation/orientation.',
+  ImageWidth: 'Reports image pixel width.',
+  ImageHeight: 'Reports image pixel height.',
+  ColorSpace: 'Reports the encoded color space metadata.',
+  Artist: 'Reports an artist/creator tag if present.',
+  Copyright: 'Reports a copyright statement if present.',
+  LensModel: 'Reports the lens model if camera metadata includes it.',
+  ExposureTime: 'Reports camera exposure duration.',
+  FNumber: 'Reports lens aperture as an f-number.',
+  ISO: 'Reports sensor sensitivity metadata.',
+  FocalLength: 'Reports lens focal length metadata.',
+  ThumbnailImage: 'Reports embedded thumbnail data or its presence.',
+  PreviewImage: 'Reports embedded preview data or its presence.',
+  XMP: 'XMP is an extensible metadata format used by many editors and asset tools.',
+  CreationDate: 'Reports a QuickTime or media creation date when available.',
+  DeviceManufacturer: 'Reports Apple maker-note device manufacturer information when present.',
+  DeviceModelName: 'Reports Apple maker-note device model information when present.',
 };
 
 function setStatus(text) {
@@ -66,12 +101,74 @@ async function init() {
   const cfg = await (await fetch('/api/config')).json();
   state.presets = cfg.presets;
   await loadAbout();
+  await loadTools();
   renderPresets();
   renderFlags();
   renderEdits();
   renderHist();
   updateMode();
   wireNavigation();
+}
+
+
+async function loadTools() {
+  try {
+    const res = await fetch('/api/tools');
+    if (res.ok) state.tools = (await res.json()).tools || {};
+  } catch {
+    state.tools = {};
+  }
+}
+
+function renderCapabilities(capabilities = state.file?.capabilities || []) {
+  const toolForCap = { metadata: 'exiftool', media: 'ffprobe', hashes: 'hash', strings: 'strings', ocr: 'tesseract', qr: 'zbarimg', embedded: 'exiftool', frames: 'ffmpeg', image: 'identify', binary: 'binwalk' };
+  $('capabilities').innerHTML = capabilities.length ? capabilities.map((cap) => {
+    const tool = state.tools[toolForCap[cap.id]];
+    const installed = !tool || tool.installed;
+    const enabled = cap.enabled && installed;
+    const why = enabled ? 'Available for this file.' : (!cap.applicable ? cap.reason : `${tool?.displayName || 'Tool'} is unavailable.`);
+    return `<button type="button" class="capability ${enabled ? '' : 'disabled'}" data-analysis="${cap.id}" ${enabled ? '' : 'disabled'}><b>${escapeHtml(cap.label)}</b><span>${escapeHtml(why)}</span></button>`;
+  }).join('') : 'Select and upload a file to see available tools.';
+}
+
+function openUtilitiesDialog() {
+  $('utilitiesList').innerHTML = Object.values(state.tools).map((tool) => `<p><b>${escapeHtml(tool.displayName)}</b><br>${tool.installed ? 'Installed' : 'Unavailable'} — ${escapeHtml(tool.version || 'Unknown')}<br><small>${escapeHtml(tool.purpose || '')}</small></p>`).join('') || '<p>No utility information loaded.</p>';
+  $('utilitiesDialog').hidden = false;
+  $('utilitiesClose').focus();
+}
+function closeUtilitiesDialog() { $('utilitiesDialog').hidden = true; }
+
+async function runInvestigation(analyses = ['hashes', 'strings']) {
+  if (!state.file) { err('Select a file first.'); return; }
+  $('taskProgress').textContent = 'running';
+  const res = await fetch('/api/investigate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...state.file, analyses, minLength: Number($('stringsMin')?.value || 6) }) });
+  const json = await res.json();
+  if (!res.ok) { err(json.error); $('taskProgress').textContent = 'failed'; return; }
+  state.investigation = json;
+  if (json.hashes) renderHashes(json.hashes);
+  if (json.strings) renderStrings(json.strings);
+  $('reportResult').textContent = JSON.stringify(json.report, null, 2);
+  $('taskProgress').textContent = `completed: ${json.completed.join(', ') || 'none'}`;
+  setStatus('Investigation completed');
+}
+
+function renderHashes(hashes) {
+  $('hashResults').innerHTML = Object.entries(hashes).map(([algorithm, hash]) => `<p><b>${escapeHtml(algorithm.toUpperCase())}</b><br><code>${escapeHtml(hash)}</code> <button type="button" data-copy-hash="${escapeHtml(hash)}">Copy</button></p>`).join('');
+  document.querySelectorAll('[data-copy-hash]').forEach((b) => b.onclick = () => copyText(b.dataset.copyHash, 'Hash copied'));
+}
+function renderStrings(strings) {
+  const q = $('stringsFilter')?.value.toLowerCase() || '';
+  const rows = strings.filter((row) => !q || row.value.toLowerCase().includes(q));
+  $('stringsResult').innerHTML = rows.length ? `<ol>${rows.map((row) => `<li><code>${escapeHtml(row.value)}</code> <button type="button" data-copy-string="${row.line}">Copy</button></li>`).join('')}</ol>` : 'No strings matched.';
+  document.querySelectorAll('[data-copy-string]').forEach((b) => b.onclick = () => copyText(strings.find((row) => row.line === Number(b.dataset.copyString))?.value || '', 'String copied'));
+}
+async function verifyHashInput() {
+  const expected = $('hashVerify').value;
+  const hashes = state.investigation?.hashes;
+  if (!hashes || !expected) { $('hashVerifyResult').textContent = ''; return; }
+  const actual = expected.length === 32 ? hashes.md5 : hashes.sha256;
+  const res = await fetch('/api/verify-hash', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ actual, expected }) });
+  $('hashVerifyResult').textContent = (await res.json()).result;
 }
 
 async function loadAbout() {
@@ -149,6 +246,93 @@ function renderHist() {
     : '<p>No commands in this browser session.</p>';
 }
 
+
+function explorerGroups() {
+  return Object.keys(state.explorer?.groups || {}).sort((a, b) => a.localeCompare(b));
+}
+
+function rowSearchText(row) {
+  return `${row.group} ${row.tag} ${row.label || ''} ${row.displayValue || row.value || ''}`.toLowerCase();
+}
+
+function filteredRows(group = state.selectedGroup) {
+  const q = $('metadataSearch')?.value.trim().toLowerCase() || '';
+  const rows = (state.explorer?.groups?.[group] || []).filter((row) => !q || rowSearchText(row).includes(q));
+  return rows.sort((a, b) => String(a[state.sort.key] ?? '').localeCompare(String(b[state.sort.key] ?? '')) * state.sort.dir);
+}
+
+function renderExplorer() {
+  const explorer = state.explorer;
+  if (!explorer || !explorer.rows?.length) {
+    $('explorerPanel').hidden = true;
+    return;
+  }
+  $('explorerPanel').hidden = false;
+  const groups = explorerGroups();
+  if (!state.selectedGroup || !groups.includes(state.selectedGroup)) state.selectedGroup = groups[0] || 'Other';
+  const q = $('metadataSearch').value.trim().toLowerCase();
+  const matchingGroups = groups.filter((group) => !q || group.toLowerCase().includes(q) || (explorer.groups[group] || []).some((row) => rowSearchText(row).includes(q)));
+  $('explorerStats').innerHTML = [
+    ['Total tags', explorer.stats.totalTags], ['Groups', explorer.stats.totalGroups], ['Duplicate tags', explorer.stats.duplicateTagCount],
+    ['GPS groups', explorer.stats.gpsGroups], ['Date/time groups', explorer.stats.dateTimeGroups], ['Embedded image groups', explorer.stats.embeddedImageGroups],
+  ].map(([k, v]) => `<span><b>${escapeHtml(k)}</b>${escapeHtml(v)}</span>`).join('');
+  $('findings').innerHTML = `<b>Interesting Findings</b>${explorer.findings?.length ? `<ul>${explorer.findings.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>` : '<div>No simple findings detected in the structured metadata.</div>'}`;
+  $('metadataTree').innerHTML = `<button class="tree-root" type="button" aria-expanded="true">▾ Metadata <span>${explorer.rows.length}</span></button>` + matchingGroups.map((group) => `<button type="button" role="treeitem" tabindex="0" class="tree-item ${group === state.selectedGroup ? 'selected' : ''}" data-group="${escapeHtml(group)}" aria-selected="${group === state.selectedGroup}"><span class="mini-icon icon-folder"></span>${escapeHtml(group)} <small>${(explorer.groups[group] || []).length}</small></button>`).join('');
+  document.querySelectorAll('[data-group]').forEach((button) => {
+    button.onclick = () => { state.selectedGroup = button.dataset.group; renderExplorer(); };
+    button.onkeydown = (event) => { if (event.key === 'Enter') button.click(); };
+  });
+  renderExplorerRows();
+  const matchCount = q ? explorer.rows.filter((row) => rowSearchText(row).includes(q)).length : explorer.rows.length;
+  $('metadataSearchCount').textContent = `${matchCount} result${matchCount === 1 ? '' : 's'}`;
+}
+
+function renderExplorerRows() {
+  const rows = filteredRows();
+  $('selectedGroupTitle').textContent = `${state.selectedGroup || 'Metadata'} (${rows.length})`;
+  $('metadataRows').innerHTML = `<div class="metadata-header" role="row">${['tag', 'displayValue', 'group', 'source'].map((key) => `<button type="button" data-sort="${key}" role="columnheader">${key === 'displayValue' ? 'Value' : key === 'source' ? 'Type / source' : key[0].toUpperCase() + key.slice(1)}</button>`).join('')}</div>` + (rows.length ? rows.map((row, i) => `<div class="metadata-row" role="row" tabindex="0" data-row="${i}"><span><b>Tag</b>${escapeHtml(row.tag)}${row.duplicate ? ' <em>duplicate</em>' : ''}</span><span><b>Value</b>${escapeHtml(row.displayValue || '(empty)')}</span><span><b>Group</b>${escapeHtml(row.group)}</span><span><b>Type / source</b>${escapeHtml(row.source || row.group)}<button type="button" data-copy-row="${i}">Copy Row</button><button type="button" data-copy-tag="${i}">Copy Tag</button><button type="button" data-copy-value="${i}">Copy Value</button></span></div>`).join('') : '<p class="empty-tree">No metadata rows match the current search.</p>');
+  document.querySelectorAll('[data-sort]').forEach((button) => { button.onclick = () => { state.sort.dir = state.sort.key === button.dataset.sort ? -state.sort.dir : 1; state.sort.key = button.dataset.sort; renderExplorerRows(); }; });
+  document.querySelectorAll('[data-row]').forEach((rowEl) => {
+    rowEl.onclick = (event) => { if (!event.target.dataset.copyRow && !event.target.dataset.copyTag && !event.target.dataset.copyValue) openTagDialog(rows[Number(rowEl.dataset.row)]); };
+    rowEl.onkeydown = (event) => { if (event.key === 'Enter') openTagDialog(rows[Number(rowEl.dataset.row)]); };
+  });
+  document.querySelectorAll('[data-copy-row]').forEach((b) => b.onclick = () => copyText(rowToText(rows[Number(b.dataset.copyRow)]), 'Row copied'));
+  document.querySelectorAll('[data-copy-tag]').forEach((b) => b.onclick = () => copyText(rows[Number(b.dataset.copyTag)].tag, 'Tag name copied'));
+  document.querySelectorAll('[data-copy-value]').forEach((b) => b.onclick = () => copyText(rows[Number(b.dataset.copyValue)].value, 'Value copied'));
+}
+
+function rowToText(row) { return `${row.group}:${row.tag} = ${row.value}`; }
+
+async function copyText(text, message = 'Copied') {
+  try {
+    await writeClipboardText(String(text ?? ''));
+    setStatus(message);
+  } catch (error) {
+    setStatus(`Copy failed: ${error.message}`);
+  }
+}
+
+function openTagDialog(row) {
+  state.selectedRow = row;
+  const key = tagExplanations[row.tag] ? row.tag : Object.keys(tagExplanations).find((k) => row.tag.includes(k) || row.group.includes(k));
+  const explanation = tagExplanations[key] || 'This tag was reported by ExifTool. Its meaning depends on the file format, metadata group, and writing software.';
+  $('tagDetails').innerHTML = `<dl class="tag-detail-grid"><dt>Tag</dt><dd>${escapeHtml(row.tag)}</dd><dt>Group</dt><dd>${escapeHtml(row.group)}</dd><dt>Value</dt><dd class="long-value">${escapeHtml(row.displayValue || '(empty)')}</dd><dt>Raw value</dt><dd class="long-value">${escapeHtml(row.rawValue == null ? '' : typeof row.rawValue === 'object' ? JSON.stringify(row.rawValue) : row.rawValue)}</dd><dt>Explanation</dt><dd>${escapeHtml(explanation)}</dd><dt>Command</dt><dd><code>${escapeHtml(state.explorer?.command || state.generatedCommand)}</code></dd></dl>`;
+  $('tagDialog').hidden = false;
+  $('tagClose').focus();
+}
+
+function closeTagDialog() { $('tagDialog').hidden = true; }
+
+function openExplorerCommand() {
+  const explorer = state.explorer;
+  if (!explorer?.command) return;
+  $('explorerCommandDetails').innerHTML = `<p><code>${escapeHtml(explorer.command)}</code></p><dl class="tag-detail-grid">${explorer.explanations.map((item) => `<dt>${escapeHtml(item.flag)}</dt><dd>${escapeHtml(item.explanation)}</dd>`).join('')}</dl>`;
+  $('commandDialog').hidden = false;
+  $('commandClose').focus();
+}
+
+function closeCommandDialog() { $('commandDialog').hidden = true; }
+
 function updateMode() {
   const badge = $('modeBadge');
   const isWrite = modifies();
@@ -215,6 +399,7 @@ async function uploadSelectedFile(file) {
   }
   state.file = json;
   renderFileInfo();
+  renderCapabilities(json.capabilities);
   setStatus('File loaded');
 }
 
@@ -256,6 +441,9 @@ async function runCommand() {
     $('download').innerHTML = json.download ? `<a class="download-link" href="${json.download}">Download processed output file</a>` : 'No generated output file for read-only operations.';
     state.hist = [{ t: new Date().toLocaleTimeString(), preset: state.preset, cmd: json.command }, ...state.hist].slice(0, 10);
     sessionStorage.mlHist = JSON.stringify(state.hist);
+    state.explorer = json.explorer;
+    renderExplorer();
+    if (json.explorer?.rows?.length) scrollToPanel('explorerPanel');
     renderHist();
     setStatus('ExifTool completed');
   } catch (error) {
@@ -268,6 +456,8 @@ function resetUi() {
   state.flags = [];
   state.edits = {};
   setGeneratedCommand('');
+  state.explorer = null;
+  $('explorerPanel').hidden = true;
   renderEdits();
   renderFlags();
   updateMode();
@@ -305,25 +495,32 @@ async function panicDelete() {
   }
 }
 
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    if (!document.execCommand('copy')) throw new Error('Browser refused clipboard access.');
+  } finally {
+    ta.remove();
+  }
+}
+
 async function copyGeneratedCommand() {
   if (!state.generatedCommand) {
     setStatus('Generate a command before copying');
     return;
   }
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(state.generatedCommand);
-    } else {
-      const ta = document.createElement('textarea');
-      ta.value = state.generatedCommand;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      if (!document.execCommand('copy')) throw new Error('Browser refused clipboard access.');
-      ta.remove();
-    }
+    await writeClipboardText(state.generatedCommand);
     setStatus('Command copied to clipboard');
   } catch (error) {
     setStatus(`Copy failed: ${error.message}`);
@@ -372,6 +569,8 @@ function handleMenuAction(action) {
     'panic-delete': openPanicDialog,
     'generate-command': previewCommand,
     'run-exiftool': runCommand,
+    'run-safe-investigation': () => runInvestigation(),
+    'installed-utilities': openUtilitiesDialog,
     'reset-options': resetUi,
     'enable-expert': () => { $('expert').checked = true; renderFlags(); scrollToPanel('advancedPanel'); },
     about: openAbout,
@@ -403,6 +602,31 @@ $('aboutOk').onclick = closeAbout;
 $('aboutCloseX').onclick = closeAbout;
 $('aboutDialog').addEventListener('click', (event) => { if (event.target === $('aboutDialog')) closeAbout(); });
 $('panicDialog').addEventListener('click', (event) => { if (event.target === $('panicDialog')) closePanicDialog(); });
+$('runSafeInvestigation').onclick = () => runInvestigation();
+$('showUtilities').onclick = openUtilitiesDialog;
+$('runHashes').onclick = () => runInvestigation(['hashes']);
+$('runStrings').onclick = () => runInvestigation(['strings']);
+$('stringsFilter').oninput = () => state.investigation?.strings && renderStrings(state.investigation.strings);
+$('hashVerify').oninput = verifyHashInput;
+$('copyReport').onclick = () => copyText($('reportResult').textContent, 'Report copied');
+$('runOcr').onclick = async () => { try { const res = await fetch('/api/validate-ocr-language', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language: $('ocrLanguage').value }) }); const json = await res.json(); $('ocrResult').textContent = res.ok ? `OCR is explicit-only. Language ${json.language} is allowed; run endpoint is not automatic.` : json.error; } catch (e) { $('ocrResult').textContent = e.message; } };
+$('validateFrameTime').onclick = async () => { const res = await fetch('/api/validate-timestamp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ timestamp: $('frameTimestamp').value }) }); const json = await res.json(); $('frameResult').textContent = res.ok ? `Timestamp accepted: ${json.timestamp}` : json.error; };
+$('utilitiesClose').onclick = closeUtilitiesDialog;
+$('utilitiesCloseX').onclick = closeUtilitiesDialog;
+$('utilitiesDialog').addEventListener('click', (event) => { if (event.target === $('utilitiesDialog')) closeUtilitiesDialog(); });
+$('metadataSearch').oninput = renderExplorer;
+$('clearMetadataSearch').onclick = () => { $('metadataSearch').value = ''; renderExplorer(); };
+$('jumpExplorer').onclick = () => scrollToPanel('explorerPanel');
+$('showExplorerCommand').onclick = openExplorerCommand;
+$('tagClose').onclick = closeTagDialog;
+$('tagCloseX').onclick = closeTagDialog;
+$('tagCopyValue').onclick = () => state.selectedRow && copyText(state.selectedRow.value, 'Value copied');
+$('tagCopyName').onclick = () => state.selectedRow && copyText(state.selectedRow.tag, 'Tag name copied');
+$('tagDialog').addEventListener('click', (event) => { if (event.target === $('tagDialog')) closeTagDialog(); });
+$('commandClose').onclick = closeCommandDialog;
+$('commandCloseX').onclick = closeCommandDialog;
+$('copyExplorerCommand').onclick = () => state.explorer?.command && copyText(state.explorer.command, 'Explorer command copied');
+$('commandDialog').addEventListener('click', (event) => { if (event.target === $('commandDialog')) closeCommandDialog(); });
 
 document.querySelectorAll('[data-menu]').forEach((button) => {
   button.addEventListener('click', (event) => { event.stopPropagation(); toggleMenu(button.dataset.menu); });
@@ -419,7 +643,7 @@ document.addEventListener('click', closeMenus);
 
 document.addEventListener('keydown', (event) => {
   const inField = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName) && event.target.type !== 'file';
-  if (event.key === 'Escape') { closeMenus(); closeAbout(); closePanicDialog(); return; }
+  if (event.key === 'Escape') { closeMenus(); closeAbout(); closePanicDialog(); closeTagDialog(); closeCommandDialog(); closeUtilitiesDialog(); return; }
   if (inField || !(event.ctrlKey || event.metaKey)) return;
   if (event.key.toLowerCase() === 'o') { event.preventDefault(); $('file').click(); }
   if (event.key === 'Enter') { event.preventDefault(); runCommand(); }

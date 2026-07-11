@@ -131,3 +131,46 @@ Start production mode:
 ```bash
 npm start
 ```
+
+## Metadata Explorer
+
+After a successful read-only ExifTool run, Metadata Lab also opens **Metadata Explorer**. It is an additional view; the command preview, organized output, raw output, download area, and session history remain available.
+
+Metadata Explorer uses a Windows XP Registry Editor / Device Manager style layout:
+
+- The left pane lists metadata groups discovered in the actual ExifTool result, such as `File`, `EXIF`, `GPS`, `XMP`, `QuickTime`, `Composite`, or tool/vendor-specific groups.
+- The right pane shows tags for the selected group with tag name, value, group, and source/type information.
+- Use the search box to filter by group, tag, label, or value.
+- Click a row to open a plain-English tag details dialog.
+- Use **Show Terminal Command** to see the exact structured ExifTool command used for the explorer and what each option means.
+
+Metadata groups are namespaces reported by ExifTool. They describe where ExifTool found or derived a tag; for example, EXIF camera fields, GPS location fields, XMP editor fields, QuickTime media fields, or Composite values derived by ExifTool.
+
+## Metadata interpretation warning
+
+Metadata can be missing, altered, incomplete, inaccurate, copied from another file, or written by software after capture. Interesting Findings are simple factual rules such as “GPS metadata is present” or “Software/editor field detected.” They are not proof of authenticity, identity, authorship, location, or manipulation.
+
+## Phase 3 optional investigation utilities on Ubuntu
+
+Install the optional command-line utilities with:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y exiftool mediainfo ffmpeg imagemagick binutils zbar-tools tesseract-ocr binwalk file
+```
+
+Optional utilities are detected at runtime in **Tools > Installed Utilities**. Metadata Lab does not crash when an optional utility is missing. The Node crypto hash workspace does not require an external hash program.
+
+Workspace-to-command mapping:
+
+- Metadata: `exiftool` with allowlisted read-only arguments.
+- Media Information: `mediainfo --Output=JSON` and `ffprobe -print_format json -show_format -show_streams` when installed.
+- Image Properties: `identify -verbose` when installed.
+- Strings: `strings -n <allowed length>` with output and result caps.
+- QR / Barcodes: `zbarimg --quiet` when installed.
+- OCR: `tesseract <file> stdout -l <allowed language>` only after explicit user action.
+- Frame Extraction: FFmpeg with validated timestamps and fixed argument arrays only.
+- Binary Structure: `binwalk` signature scan only; recursive extraction and carving are disabled.
+- Hashes: Node `crypto` SHA-256 and MD5.
+
+Safety limits include maximum upload size, magic-byte file type verification, output caps, timeouts, generated-artifact limits, no archive extraction, no arbitrary command names, no arbitrary flags, private temporary directories, sanitized errors, and private-network deployment. OCR can be wrong, metadata can be absent or altered, strings may be misleading fragments, and binary signatures may be false positives.
