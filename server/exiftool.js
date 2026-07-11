@@ -70,3 +70,79 @@ export async function deleteExpired() {
     if (st && now - st.mtimeMs > config.expirationMs) await fs.rm(p, { recursive: true, force: true });
   }
 }
+
+export const explorerOptions = [
+  ['-a', 'Shows duplicate tags.'],
+  ['-G1', 'Shows metadata group names.'],
+  ['-s', 'Shows compact ExifTool tag names.'],
+  ['-json', 'Returns structured JSON for the Metadata Explorer.'],
+];
+
+export function buildExplorerArgs(inputPath) {
+  const args = [...explorerOptions.map(([flag]) => flag), inputPath];
+  return { args, command: ['exiftool', ...args.map(a => a.includes(' ') ? JSON.stringify(a) : a)].join(' '), explanations: explorerOptions.map(([flag, explanation]) => ({ flag, explanation })) };
+}
+
+export function parseExplorerJson(stdout = '') {
+  let docs;
+  try { docs = JSON.parse(stdout || '[]'); } catch { docs = []; }
+  const source = Array.isArray(docs) ? docs[0] || {} : docs || {};
+  const seen = new Map();
+  const rows = [];
+  for (const [fullKey, raw] of Object.entries(source)) {
+    if (fullKey === 'SourceFile') continue;
+    const textKey = String(fullKey);
+    const split = textKey.includes(':') ? textKey.split(':') : ['Other', textKey];
+    const group = split.length > 1 ? split.shift() || 'Other' : 'Other';
+    const tag = split.join(':') || textKey;
+    const value = raw == null ? '' : Array.isArray(raw) || typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
+    const duplicateKey = tag;
+    const instance = (seen.get(duplicateKey) || 0) + 1;
+    seen.set(duplicateKey, instance);
+    rows.push({ group, tag, label: labelForTag(tag), rawValue: raw, value, displayValue: value === '' ? '(empty)' : value, source: group, instance, duplicate: instance > 1 });
+  }
+  return summarizeExplorerRows(rows);
+}
+
+export function summarizeExplorerRows(rows = []) {
+  const groups = {};
+  for (const row of rows) (groups[row.group || 'Other'] ||= []).push(row);
+  const duplicateTagCount = rows.filter(r => r.duplicate).length;
+  const groupNames = Object.keys(groups).sort((a, b) => a.localeCompare(b));
+  return {
+    rows,
+    groups,
+    stats: {
+      totalTags: rows.length,
+      totalGroups: groupNames.length,
+      duplicateTagCount,
+      gpsGroups: groupNames.filter(g => /gps/i.test(g) || groups[g].some(r => /gps/i.test(r.tag))).length,
+      dateTimeGroups: groupNames.filter(g => groups[g].some(r => /(date|time)/i.test(r.tag))).length,
+      embeddedImageGroups: groupNames.filter(g => groups[g].some(r => /(thumbnail|preview|embedded|gain.?map|depth)/i.test(r.tag))).length,
+    },
+    findings: buildInterestingFindings(rows),
+  };
+}
+
+export function buildInterestingFindings(rows = []) {
+  const has = (re) => rows.find(r => re.test(`${r.group} ${r.tag} ${r.value}`));
+  const val = (re) => rows.find(r => re.test(r.tag) && r.value)?.value;
+  const findings = [];
+  if (has(/\bGPS\b|GPSLatitude|GPSLongitude|GPSPosition/i)) findings.push('GPS metadata is present.');
+  const model = val(/^(Model|DeviceModelName)$/i); if (model) findings.push(`Camera or phone model detected: ${model}.`);
+  const software = val(/^Software$/i); if (software) findings.push(`Software/editor field detected: ${software}.`);
+  if (has(/ThumbnailImage/i)) findings.push('Embedded thumbnail metadata is present.');
+  if (has(/PreviewImage/i)) findings.push('Embedded preview metadata is present.');
+  if (has(/HDR|Gain.?Map/i)) findings.push('HDR or gain-map-related metadata detected.');
+  if (has(/Depth/i)) findings.push('Depth-related metadata detected.');
+  if (has(/QuickTime/i)) findings.push('QuickTime metadata is present.');
+  const created = val(/^(DateTimeOriginal|CreateDate|CreationDate)$/i), modified = val(/^(ModifyDate|ModificationDate)$/i);
+  if (created && modified && created !== modified) findings.push('Creation and modification date tags report different values.');
+  if (has(/Serial/i)) findings.push('Serial-number-like tags detected.');
+  if (has(/Copyright|Artist|Author/i)) findings.push('Copyright or author tags are present.');
+  return findings.slice(0, 12);
+}
+
+export function labelForTag(tag = '') {
+  return String(tag).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+}
