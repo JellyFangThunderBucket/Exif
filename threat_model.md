@@ -1,18 +1,16 @@
-# Concise threat model
+# Memory Cartographer Threat Model
 
-Metadata Lab protects against accidental public exposure and common file-handling bugs for a private self-hosted ExifTool UI.
+## Protected
+- Vault contents at rest when locked are encrypted with authenticated encryption.
+- Plaintext encryption keys are not written to disk.
+- Imports are checksummed, deduplicated, and stored under a local vault path.
+- The app has no telemetry, no remote scripts, and no external AI calls.
 
-## Assets
-Uploaded originals, generated outputs, metadata displayed in the browser, and temporary server paths.
+## Not protected
+- Data while the vault is unlocked in process memory.
+- A compromised operating system, browser, Node runtime, or local administrator.
+- Weak passphrases or shoulder surfing.
+- Secure deletion on SSDs or journaled filesystems.
 
-## Controls
-- ExifTool is executed with `spawn` and an argument array, never with an unrestricted shell.
-- User-selected flags are checked against an allowlist.
-- Temporary directories and names are random; path access is resolved under one configured temp root.
-- Originals are never overwritten; write operations use `-o` to create a new output file.
-- Upload MIME type, file count, file size, and request rate are limited.
-- Panic Delete and expiration cleanup remove temporary files.
-- The default bind address is localhost; production exposure should use authenticated HTTPS reverse proxying.
-
-## Remaining risks
-ExifTool and parser vulnerabilities in media libraries remain possible, so keep Ubuntu packages updated and run the service as an unprivileged user. MIME detection is browser-provided in the MVP; add magic-byte verification before untrusted multi-user deployment.
+## MVP cryptography limitation
+The MVP uses Node `scrypt` plus AES-256-GCM because the existing dependency-free Node project has no Argon2id library. Version 1 should move vault crypto into Tauri/Rust using Argon2id and XChaCha20-Poly1305 or audited AES-GCM.
