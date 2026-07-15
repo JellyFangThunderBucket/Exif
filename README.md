@@ -1,188 +1,56 @@
-# Metadata Lab
+# Memory Cartographer
 
-Metadata Lab is a private Windows XP-style web interface for running a safe, allowlisted subset of ExifTool against files you upload to your own machine or server.
+Memory Cartographer is a private, local-first observatory for exploring personal artifacts as evidence-linked maps, constellations, reconstructions, and patterns. This repository previously contained Metadata Lab; the current branch implements a coherent Memory Cartographer MVP on the existing dependency-free Node/Express static-app foundation.
 
-> **Security warning:** do not expose Metadata Lab directly to the public internet. If you need remote access, put it behind authenticated HTTPS on a private network or VPN.
-
-## Requirements
-
-- Node.js 20 or newer
-- ExifTool installed on the host or available in the container image
-- A private machine/server you control
-
-## Launch locally
-
-Copy and paste these commands from the repository root:
+## Run locally
 
 ```bash
-npm test
-npm run build
-npm start
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
-
-For development, this equivalent command also starts the server:
-
-```bash
+npm install
 npm run dev
 ```
 
-## Launch with Docker
+Open <http://localhost:3000> unless `PORT` is set.
 
-Build and run the image:
+## What works in the MVP
 
-```bash
-docker build -t metadata-lab .
-docker run --rm -p 3000:3000 --name metadata-lab metadata-lab
-```
+- Fictional demo vault loaded on startup.
+- Create and unlock an encrypted local vault.
+- Import real local files with supported filename families: JPEG, PNG, HEIC, WebP, MP3, M4A, WAV, TXT, Markdown, PDF, ICS, MBOX, EML, CSV, JSON, and Spotify-style JSON exports.
+- SHA-256 duplicate detection and provenance records.
+- Deterministic local entity/theme/emotion extraction fallback.
+- Evidence-linked reflective search with an inspectable query plan.
+- Offline schematic life map, relationship constellation, reconstruction workspace, pattern library, artifact explorer, export controls, and privacy settings.
 
-If you prefer Docker Compose:
+## Vault storage
 
-```bash
-docker compose -f deploy/docker-compose.yml up --build
-```
-
-Then open:
-
-```text
-http://localhost:3000
-```
-
-## Open from another device on the same private network
-
-1. Start Metadata Lab on your server or desktop while listening on the private network interface:
-
-```bash
-HOST=0.0.0.0 npm start
-```
-
-2. Find that machine's private LAN IP address.
-
-On macOS or Linux:
-
-```bash
-hostname -I
-```
-
-On Windows PowerShell:
-
-```powershell
-ipconfig
-```
-
-3. From your iPhone or another device connected to the same Wi-Fi/network, open the server address with port `3000`:
+Encrypted vaults are stored by default at:
 
 ```text
-http://YOUR_PRIVATE_IP:3000
+.memory-vaults/<vault-name>/vault.mc
 ```
 
-Example:
+Set `MEMORY_VAULT_ROOT` to move this location. The MVP stores originals and derived annotations together in an authenticated encrypted JSON vault payload.
 
-```text
-http://192.168.1.25:3000
-```
+## Fully local operations
 
-If the page does not load, check the server firewall and confirm both devices are on the same private network.
+All demo loading, vault encryption/decryption, imports, checksums, deterministic extraction, search, pattern detection, reconstruction, and export are local. There are no accounts, telemetry, remote scripts, ads, analytics, or external AI calls.
 
-## Install on an iPhone Home Screen
+## Security limitations
 
-1. Open Metadata Lab in Safari on the iPhone.
-2. Tap the Share button.
-3. Tap **Add to Home Screen**.
-4. Confirm the name and tap **Add**.
+The MVP uses Node `scrypt` and AES-256-GCM. The product target remains Argon2id plus XChaCha20-Poly1305 or audited AES-GCM in Rust/Tauri. See `threat_model.md` for what is and is not protected.
 
-The app includes a local web manifest so it can launch like a Home Screen utility while still running from your private server.
+## Documentation
 
-## Generate vs Copy vs Run
+- Architecture: `docs/architecture.md`
+- Data schema: `docs/data_schema.md`
+- Importer interface: `docs/importers.md`
+- Privacy principles: `docs/privacy_principles.md`
+- Threat model: `threat_model.md`
+- Roadmap: `docs/roadmap.md`
 
-- **Generate Command** asks the backend to build the exact allowlisted ExifTool command preview for the current file and options. It does not run ExifTool.
-- **Copy Command** copies the generated preview to your clipboard. It is disabled until you generate a command.
-- **Run ExifTool** executes the allowlisted command on the server. Read-only presets inspect the upload; write/removal presets create a separate output copy and never overwrite the uploaded original.
-
-## Safety model
-
-- ExifTool is started with `spawn(..., { shell: false })`.
-- ExifTool options and editable tags are restricted by allowlists in `server/exiftool.js`.
-- Uploaded originals are stored in a temporary private directory.
-- Write operations use a new generated output path instead of overwriting the uploaded original.
-- Delete Temporary Files removes temporary uploads, generated output files, and browser session history after confirmation.
-
-## Useful commands
-
-Run tests:
+## Checks
 
 ```bash
 npm test
-```
-
-Run the static build check:
-
-```bash
 npm run build
 ```
-
-Start production mode:
-
-```bash
-npm start
-```
-
-## Metadata Explorer
-
-After a successful read-only ExifTool run, Metadata Lab also opens **Metadata Explorer**. It is an additional view; the command preview, organized output, raw output, download area, and session history remain available.
-
-Metadata Explorer uses a Windows XP Registry Editor / Device Manager style layout:
-
-- The left pane lists metadata groups discovered in the actual ExifTool result, such as `File`, `EXIF`, `GPS`, `XMP`, `QuickTime`, `Composite`, or tool/vendor-specific groups.
-- The right pane shows tags for the selected group with tag name, value, group, and source/type information.
-- Use the search box to filter by group, tag, label, or value.
-- Click a row to open a plain-English tag details dialog.
-- Use **Show Terminal Command** to see the exact structured ExifTool command used for the explorer and what each option means.
-
-Metadata groups are namespaces reported by ExifTool. They describe where ExifTool found or derived a tag; for example, EXIF camera fields, GPS location fields, XMP editor fields, QuickTime media fields, or Composite values derived by ExifTool.
-
-## Metadata interpretation warning
-
-Metadata can be missing, altered, incomplete, inaccurate, copied from another file, or written by software after capture. Interesting Findings are simple factual rules such as “GPS metadata is present” or “Software/editor field detected.” They are not proof of authenticity, identity, authorship, location, or manipulation.
-
-## Phase 3 optional investigation utilities on Ubuntu
-
-Install the optional command-line utilities with:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y exiftool mediainfo ffmpeg imagemagick binutils zbar-tools tesseract-ocr binwalk file
-```
-
-Optional utilities are detected at runtime in **Tools > Installed Utilities**. Metadata Lab does not crash when an optional utility is missing. The Node crypto hash workspace does not require an external hash program.
-
-Workspace-to-command mapping:
-
-- Metadata: `exiftool` with allowlisted read-only arguments.
-- Media Information: `mediainfo --Output=JSON` and `ffprobe -print_format json -show_format -show_streams` when installed.
-- Image Properties: `identify -verbose` when installed.
-- Strings: `strings -n <allowed length>` with output and result caps.
-- QR / Barcodes: `zbarimg --quiet` when installed.
-- OCR: `tesseract <file> stdout -l <allowed language>` only after explicit user action.
-- Frame Extraction: FFmpeg with validated timestamps and fixed argument arrays only.
-- Binary Structure: `binwalk` signature scan only; recursive extraction and carving are disabled.
-- Hashes: Node `crypto` SHA-256 and MD5.
-
-Safety limits include maximum upload size, magic-byte file type verification, output caps, timeouts, generated-artifact limits, no archive extraction, no arbitrary command names, no arbitrary flags, private temporary directories, sanitized errors, and private-network deployment. OCR can be wrong, metadata can be absent or altered, strings may be misleading fragments, and binary signatures may be false positives.
-
-## Stage 4 completion notes
-
-Installed Utilities can be rechecked from **Tools > Installed Utilities**. The dialog uses `/api/tools?refresh=1` and shows installed/unavailable state, version text when the executable reports it, purpose, and install hints. The full Ubuntu command is:
-
-```bash
-sudo apt install -y libimage-exiftool-perl mediainfo ffmpeg imagemagick binutils zbar-tools tesseract-ocr binwalk file
-```
-
-Safe Investigation chooses tools from the uploaded file's detected MIME family. It always includes hashes, uses read-only utilities only when applicable and installed, skips unavailable tools with an explanation, and does not run OCR automatically. Cancellation kills the active allowlisted child process and preserves completed results.
-
-Output limits include upload size limits, tool stdout/stderr caps, strings count caps, report size caps, generated-artifact size/count caps, and per-tool timeouts. Metadata, OCR, QR/barcode values, printable strings, media signatures, and binary signatures can be missing, altered, inaccurate, irrelevant, or misleading.
