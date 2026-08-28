@@ -11,7 +11,7 @@ export const stringLengthAllowlist = [4, 6, 8, 12];
 export const timestampPattern = /^(?:\d{1,2}:)?\d{1,2}:\d{2}(?:\.\d{1,3})?$/;
 
 export const toolRegistry = {
-  exiftool: { id: 'exiftool', displayName: 'ExifTool', command: config.exiftoolPath, supportedMimeFamilies: ['image', 'video', 'audio', 'application', 'text'], timeoutMs: 30000, maxOutputBytes: 256000, allowedArgs: ['-ver', '-G1', '-s', '-a', '-json', '-j', '-b', '-thumbnailimage', '-previewimage'], enabledByDefault: true, expensive: false, mayExtractFiles: true, installHint: 'sudo apt install -y libimage-exiftool-perl', purpose: 'Metadata reading and embedded resource discovery.' },
+  exiftool: { id: 'exiftool', displayName: 'ExifTool', command: config.exiftoolPath, availabilityArgs: ['-ver'], supportedMimeFamilies: ['image', 'video', 'audio', 'application', 'text'], timeoutMs: 30000, maxOutputBytes: 256000, allowedArgs: ['-ver', '-G1', '-s', '-a', '-json', '-j', '-b', '-thumbnailimage', '-previewimage'], enabledByDefault: true, expensive: false, mayExtractFiles: true, installHint: 'sudo apt install -y libimage-exiftool-perl', purpose: 'Metadata reading and embedded resource discovery.' },
   mediainfo: { id: 'mediainfo', displayName: 'MediaInfo', command: 'mediainfo', supportedMimeFamilies: ['video', 'audio'], timeoutMs: 15000, maxOutputBytes: 256000, allowedArgs: ['--Output=JSON'], enabledByDefault: true, expensive: false, mayExtractFiles: false, installHint: 'sudo apt install -y mediainfo', purpose: 'Media container and stream information.' },
   ffprobe: { id: 'ffprobe', displayName: 'FFprobe', command: 'ffprobe', supportedMimeFamilies: ['video', 'audio'], timeoutMs: 15000, maxOutputBytes: 256000, allowedArgs: ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams'], enabledByDefault: true, expensive: false, mayExtractFiles: false, installHint: 'sudo apt install -y ffmpeg', purpose: 'Media stream and codec summary.' },
   identify: { id: 'identify', displayName: 'ImageMagick identify', command: 'identify', supportedMimeFamilies: ['image'], timeoutMs: 15000, maxOutputBytes: 128000, allowedArgs: ['-verbose'], enabledByDefault: true, expensive: false, mayExtractFiles: false, installHint: 'sudo apt install -y imagemagick', purpose: 'Image dimensions, format, color, and profile properties.' },
@@ -23,6 +23,15 @@ export const toolRegistry = {
   binwalk: { id: 'binwalk', displayName: 'binwalk', command: 'binwalk', supportedMimeFamilies: ['image', 'video', 'audio', 'application'], timeoutMs: 20000, maxOutputBytes: 128000, allowedArgs: [], enabledByDefault: false, expensive: true, mayExtractFiles: false, installHint: 'sudo apt install -y binwalk', purpose: 'Read-only binary signature scan; no extraction.' },
   ffmpeg: { id: 'ffmpeg', displayName: 'FFmpeg', command: 'ffmpeg', supportedMimeFamilies: ['video'], timeoutMs: 30000, maxOutputBytes: 64000, allowedArgs: ['-y', '-ss', '-i', '-frames:v', '1'], enabledByDefault: false, expensive: true, mayExtractFiles: true, installHint: 'sudo apt install -y ffmpeg', purpose: 'Explicit video frame extraction to a private output file.' },
 };
+
+const availabilityArgs = {
+  mediainfo: ['--Version'], ffprobe: ['-version'], ffmpeg: ['-version'], identify: ['-version'],
+  strings: ['--version'], zbarimg: ['--version'], tesseract: ['--version'], file: ['--version'],
+  // Ubuntu's packaged Binwalk does not support --version. With no target this
+  // is a safe, read-only executable probe that does not depend on that option.
+  binwalk: [],
+};
+for (const [id, args] of Object.entries(availabilityArgs)) toolRegistry[id].availabilityArgs = args;
 
 const availabilityCache = { t: 0, data: null };
 const running = new Map();
@@ -49,11 +58,28 @@ export async function detectMagic(filePath, browserMime = '') {
   return { browserMime, detectedMime: detected, trusted: !browserMime || browserMime === detected || browserMime.startsWith(familyFromMime(detected) + '/') };
 }
 
-export async function getToolAvailability(force = false) { if (!force && availabilityCache.data && Date.now() - availabilityCache.t < 60000) return availabilityCache.data; const data = {}; await Promise.all(Object.values(toolRegistry).map(async tool => { if (tool.command === 'node:crypto') { data[tool.id] = { ...publicTool(tool), installed: true, version: process.version }; return; } try { const flag = tool.id === 'exiftool' ? ['-ver'] : tool.id === 'mediainfo' ? ['--Version'] : tool.id === 'ffprobe' || tool.id === 'ffmpeg' || tool.id === 'identify' ? ['-version'] : ['--version']; const r = await safeRunTool(tool.id, flag, { timeoutMs: 2500, maxOutputBytes: 4096, allowVersionArgs: true }); data[tool.id] = { ...publicTool(tool), installed: true, version: firstLine(r.stdout || r.stderr) }; } catch (e) { data[tool.id] = { ...publicTool(tool), installed: false, version: 'Unavailable', error: sanitizeError(e) }; } })); availabilityCache.t = Date.now(); availabilityCache.data = data; return data; }
-function publicTool(tool) { const { command, allowedArgs, ...rest } = tool; return rest; }
+export async function getToolAvailability(force = false) {
+  if (!force && availabilityCache.data && Date.now() - availabilityCache.t < 60000) return availabilityCache.data;
+  const data = {};
+  // Probes share the bounded analysis runner. Serial execution prevents its
+  // concurrency guard from turning queued probes into false "unavailable" results.
+  for (const tool of Object.values(toolRegistry)) {
+    if (tool.command === 'node:crypto') { data[tool.id] = { ...publicTool(tool), installed: true, version: process.version }; continue; }
+    try {
+      const r = await safeRunTool(tool.id, tool.availabilityArgs, { timeoutMs: 2500, maxOutputBytes: 16384, allowAvailabilityArgs: true });
+      // Being spawned is the availability signal. Neither a nonzero probe exit
+      // nor an unfamiliar/empty version line means the executable is missing.
+      data[tool.id] = { ...publicTool(tool), installed: true, version: firstLine(r.stdout || r.stderr) };
+    } catch (e) {
+      data[tool.id] = { ...publicTool(tool), installed: false, version: 'Unavailable', error: sanitizeError(e) };
+    }
+  }
+  availabilityCache.t = Date.now(); availabilityCache.data = data; return data;
+}
+function publicTool(tool) { const { command, allowedArgs, availabilityArgs, ...rest } = tool; return rest; }
 function firstLine(s = '') { return String(s).split('\n').find(Boolean)?.slice(0, 160) || 'Installed'; }
 
-export function safeRunTool(toolId, args = [], opts = {}) { const tool = toolRegistry[toolId]; if (!tool) return Promise.reject(new Error('Executable is not allowlisted.')); const versionArgs = ['--version', '--Version', '-version', '-ver']; if (!opts.allowVersionArgs || !args.every(a => versionArgs.includes(a))) validateAllowedArgs(toolId, args); const timeoutMs = opts.timeoutMs || tool.timeoutMs; const maxOutputBytes = opts.maxOutputBytes || tool.maxOutputBytes; const id = opts.taskId || crypto.randomUUID(); return new Promise((resolve, reject) => { if (activeProcesses >= maxConcurrent) return reject(new Error('Too many analyses are already running.')); activeProcesses++; const child = spawn(tool.command, args, { shell: false, windowsHide: true, cwd: opts.cwd || config.tempRoot, env: { PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8' } }); let stdout = '', stderr = '', capped = false; const finish = (fn, val) => { activeProcesses--; running.delete(id); fn(val); }; const cap = (name, data) => { const next = (name === 'stdout' ? stdout : stderr) + data; if (Buffer.byteLength(next) > maxOutputBytes) { capped = true; child.kill('SIGKILL'); } else if (name === 'stdout') stdout = next; else stderr = next; }; const timer = setTimeout(() => { child.kill('SIGKILL'); finish(reject, new Error(`${tool.displayName} timed out.`)); }, timeoutMs); running.set(id, child); child.stdout.on('data', d => cap('stdout', d)); child.stderr.on('data', d => cap('stderr', d)); child.on('error', e => { clearTimeout(timer); finish(reject, e); }); child.on('close', code => { clearTimeout(timer); if (cancelled.delete(id)) return finish(reject, new Error(`${tool.displayName} cancelled.`)); if (capped) return finish(reject, new Error(`${tool.displayName} output limit exceeded.`)); finish(resolve, { taskId: id, code, stdout, stderr, command: [tool.command, ...args].join(' ') }); }); }); }
+export function safeRunTool(toolId, args = [], opts = {}) { const tool = toolRegistry[toolId]; if (!tool) return Promise.reject(new Error('Executable is not allowlisted.')); if (!opts.allowAvailabilityArgs || !Array.isArray(tool.availabilityArgs) || args.length !== tool.availabilityArgs.length || !args.every((arg, i) => arg === tool.availabilityArgs[i])) validateAllowedArgs(toolId, args); const timeoutMs = opts.timeoutMs || tool.timeoutMs; const maxOutputBytes = opts.maxOutputBytes || tool.maxOutputBytes; const id = opts.taskId || crypto.randomUUID(); return new Promise((resolve, reject) => { if (activeProcesses >= maxConcurrent) return reject(new Error('Too many analyses are already running.')); activeProcesses++; const child = spawn(tool.command, args, { shell: false, windowsHide: true, cwd: opts.cwd || config.tempRoot, env: { PATH: process.env.PATH || '/usr/bin:/bin', LANG: 'C.UTF-8' } }); let stdout = '', stderr = '', capped = false; const finish = (fn, val) => { activeProcesses--; running.delete(id); fn(val); }; const cap = (name, data) => { const next = (name === 'stdout' ? stdout : stderr) + data; if (Buffer.byteLength(next) > maxOutputBytes) { capped = true; child.kill('SIGKILL'); } else if (name === 'stdout') stdout = next; else stderr = next; }; const timer = setTimeout(() => { child.kill('SIGKILL'); finish(reject, new Error(`${tool.displayName} timed out.`)); }, timeoutMs); running.set(id, child); child.stdout.on('data', d => cap('stdout', d)); child.stderr.on('data', d => cap('stderr', d)); child.on('error', e => { clearTimeout(timer); finish(reject, e); }); child.on('close', code => { clearTimeout(timer); if (cancelled.delete(id)) return finish(reject, new Error(`${tool.displayName} cancelled.`)); if (capped) return finish(reject, new Error(`${tool.displayName} output limit exceeded.`)); finish(resolve, { taskId: id, code, stdout, stderr, command: [tool.command, ...args].join(' ') }); }); }); }
 export function cancelTask(id) { const child = running.get(id); if (!child) return false; cancelled.add(id); child.kill('SIGKILL'); return true; }
 
 export async function hashFile(filePath) { const data = await fs.readFile(filePath); return { sha256: crypto.createHash('sha256').update(data).digest('hex'), md5: crypto.createHash('md5').update(data).digest('hex') }; }

@@ -153,7 +153,12 @@ function renderCapabilities(capabilities = state.file?.capabilities || []) {
   }).join('') : 'Select and upload a file to see available tools.';
 }
 
-function openUtilitiesDialog() {
+async function openUtilitiesDialog() {
+  try {
+    const res = await fetch('/api/tools?refresh=1');
+    if (res.ok) state.tools = (await res.json()).tools || {};
+  } catch {}
+  renderCapabilities();
   $('utilitiesList').innerHTML = Object.values(state.tools).map((tool) => `<p><b>${escapeHtml(tool.displayName)}</b><br>${tool.installed ? 'Installed' : 'Unavailable'} — ${escapeHtml(tool.version || 'Unknown')}<br><small>${escapeHtml(tool.purpose || '')}</small></p>`).join('') || '<p>No utility information loaded.</p>';
   $('utilitiesDialog').hidden = false;
   $('utilitiesClose').focus();
