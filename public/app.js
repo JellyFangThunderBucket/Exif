@@ -101,6 +101,7 @@ function modifies() {
 }
 
 async function init() {
+  window.CursorMode?.initialize();
   const cfg = await (await fetch('/api/config')).json();
   state.presets = cfg.presets;
   await loadAbout();
@@ -598,6 +599,7 @@ function handleMenuAction(action) {
     'run-exiftool': runCommand,
     'run-safe-investigation': () => runInvestigation(),
     'installed-utilities': openUtilitiesDialog,
+    'cursor-mode': () => window.CursorMode?.toggleCursorMode(),
     'reset-options': resetUi,
     'enable-expert': () => { $('expert').checked = true; renderFlags(); scrollToPanel('advancedPanel'); },
     about: openAbout,
