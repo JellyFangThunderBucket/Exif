@@ -101,6 +101,7 @@ function modifies() {
 }
 
 async function init() {
+  window.CursorMode?.initialize();
   const cfg = await (await fetch('/api/config')).json();
   state.presets = cfg.presets;
   await loadAbout();
@@ -153,7 +154,12 @@ function renderCapabilities(capabilities = state.file?.capabilities || []) {
   }).join('') : 'Select and upload a file to see available tools.';
 }
 
-function openUtilitiesDialog() {
+async function openUtilitiesDialog() {
+  try {
+    const res = await fetch('/api/tools?refresh=1');
+    if (res.ok) state.tools = (await res.json()).tools || {};
+  } catch {}
+  renderCapabilities();
   $('utilitiesList').innerHTML = Object.values(state.tools).map((tool) => `<p><b>${escapeHtml(tool.displayName)}</b><br>${tool.installed ? 'Installed' : 'Unavailable'} — ${escapeHtml(tool.version || 'Unknown')}<br><small>${escapeHtml(tool.purpose || '')}</small></p>`).join('') || '<p>No utility information loaded.</p>';
   $('utilitiesDialog').hidden = false;
   $('utilitiesClose').focus();
@@ -593,6 +599,7 @@ function handleMenuAction(action) {
     'run-exiftool': runCommand,
     'run-safe-investigation': () => runInvestigation(),
     'installed-utilities': openUtilitiesDialog,
+    'cursor-mode': () => window.CursorMode?.toggleCursorMode(),
     'reset-options': resetUi,
     'enable-expert': () => { $('expert').checked = true; renderFlags(); scrollToPanel('advancedPanel'); },
     about: openAbout,

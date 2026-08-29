@@ -504,6 +504,11 @@ button:disabled:hover { background: linear-gradient(#fff, #ecebe5 45%, #d8d2bd 4
 .icon-trash::after { content: ''; position: absolute; left: 3px; top: 3px; width: 10px; height: 2px; background: #777; }
 .icon-tools::before { content: ''; position: absolute; left: 7px; top: 2px; width: 3px; height: 12px; background: #777; transform: rotate(35deg); }
 .icon-tools::after { content: ''; position: absolute; left: 3px; top: 9px; width: 10px; height: 3px; background: #d28b00; transform: rotate(-35deg); }
+
+.virtual-cursor { position: fixed; left: 0; top: 0; width: 20px; height: 24px; z-index: 2147483647; pointer-events: none; background: url('/cursor-xp.svg') 0 0 / 20px 24px no-repeat; filter: drop-shadow(1px 1px 1px rgba(0,0,0,.45)); will-change: transform; }
+.virtual-cursor-feedback { position: fixed; left: 0; top: 0; width: 12px; height: 12px; z-index: 2147483646; pointer-events: none; border: 1px solid #245edb; border-radius: 50%; opacity: 0; }
+.virtual-cursor-feedback.virtual-cursor-click { animation: virtual-cursor-click 130ms ease-out; }
+@keyframes virtual-cursor-click { from { opacity: .65; box-shadow: 0 0 0 0 rgba(36,94,219,.25); } to { opacity: 0; box-shadow: 0 0 0 3px rgba(36,94,219,0); } }
 .icon-gear::before { content: '⚙'; position: absolute; left: 0; top: -4px; color: #555; font-size: 16px; }
 .icon-chart::before { content: ''; position: absolute; left: 3px; bottom: 2px; width: 2px; height: 8px; background: #245edb; box-shadow: 4px -3px #4a9a2a, 8px -6px #d28b00; }
 .icon-info::before { content: 'i'; position: absolute; left: 5px; top: -2px; font: bold 15px Georgia, serif; color: #245edb; }
